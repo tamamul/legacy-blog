@@ -1,208 +1,42 @@
-name: Build Laravel Package
+name: Quick Laravel Build
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout
         uses: actions/checkout@v3
 
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
         with:
           php-version: '8.2'
-          extensions: mbstring, pdo, pdo_mysql, tokenizer, xml, ctype, json, bcmath
+          extensions: mbstring, xml, ctype, json
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v1
-        with:
-          bun-version: latest
-
-      - name: Install Composer Dependencies (No Dev)
-        run: composer install --no-dev --prefer-dist --optimize-autoloader
-
-      - name: Copy .env and Generate Key
+      - name: Install Dependencies
         run: |
-          cp .env.example .env
-          php artisan key:generate
+          composer install --no-dev --prefer-dist --optimize-autoloader --no-progress --no-suggest
+          composer dump-autoload --optimize
 
-      - name: Setup MySQL
-        uses: ankane/setup-mysql@v1
-        with:
-          mysql-version: '8.0'
-
-      - name: Configure MySQL Access
+      - name: Create Essential Package
         run: |
-          sudo mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '';"
-          sudo mysql -e "FLUSH PRIVILEGES;"
-          sudo systemctl restart mysql
-          sleep 3
-
-      - name: Create Database and Run Migrations
-        run: |
-          mysql -u root -e "CREATE DATABASE IF NOT EXISTS benjamincrozat;"
-          sed -i 's/DB_CONNECTION=.*/DB_CONNECTION=mysql/' .env
-          sed -i 's/DB_HOST=.*/DB_HOST=127.0.0.1/' .env
-          sed -i 's/DB_PORT=.*/DB_PORT=3306/' .env
-          sed -i 's/DB_DATABASE=.*/DB_DATABASE=benjamincrozat/' .env
-          sed -i 's/DB_USERNAME=.*/DB_USERNAME=root/' .env
-          sed -i 's/DB_PASSWORD=.*/DB_PASSWORD=/' .env
-          php artisan migrate --force --seed
-
-      - name: Install Frontend Dependencies and Build
-        run: |
-          bun install
-          bun run build
-
-      - name: Skip Tests
-        run: echo "Skipping tests for package build"
-
-      - name: Dump Database
-        run: |
-          mysqldump -u root benjamincrozat > database/dump.sql
-          echo "Database dump completed. Size: $(wc -l < database/dump.sql) lines"
-
-      - name: Create Production .env Template
-        run: |
-          # Generate fresh key untuk production
-          php artisan key:generate --show > app_key.txt
-          APP_KEY=$(cat app_key.txt)
+          mkdir deploy
+          # Hanya file yang essential
+          cp -r app bootstrap config database public resources routes storage vendor deploy/
+          cp artisan composer.json composer.lock deploy/
           
-          cat > .env.production << EOF
-          APP_NAME="Benjamin Crozat"
-          APP_ENV=production
-          APP_KEY=${APP_KEY}
-          APP_DEBUG=false
-          APP_URL=https://yourdomain.com
-
-          LOG_CHANNEL=stack
-          LOG_LEVEL=error
-
-          DB_CONNECTION=mysql
-          DB_HOST=127.0.0.1
-          DB_PORT=3306
-          DB_DATABASE=benjamincrozat
-          DB_USERNAME=your_username
-          DB_PASSWORD=your_password
-
-          BROADCAST_DRIVER=log
-          CACHE_DRIVER=file
-          QUEUE_CONNECTION=sync
-          SESSION_DRIVER=database
-          SESSION_LIFETIME=120
-
-          MAIL_MAILER=smtp
-          MAIL_HOST=mailhog
-          MAIL_PORT=1025
-          MAIL_USERNAME=null
-          MAIL_PASSWORD=null
-          MAIL_ENCRYPTION=null
-          MAIL_FROM_ADDRESS=null
-          MAIL_FROM_NAME="\${APP_NAME}"
-
-          # Sentry (Production Only)
-          SENTRY_LARAVEL_DSN=
-          SENTRY_TRACES_SAMPLE_RATE=0.1
-          EOF
-
-      - name: Create Deployment Instructions
-        run: |
-          cat > DEPLOYMENT.md << 'EOF'
-          # Deployment Instructions
-
-          ## Server Requirements
-          - PHP 8.2+
-          - MySQL 8.0+
-          - Bun or Node.js
-          - Composer
-
-          ## Quick Deployment
-          1. Extract package to server
-          2. Create database: `benjamincrozat`
-          3. Update `.env` with your database credentials
-          4. Run: `php artisan migrate --force`
-          5. Run: `bun install && bun run build` (or npm/yarn equivalent)
-          6. Point web server to `/public` directory
-
-          ## Database Import (Optional)
-          Import `database/dump.sql` if you want sample data.
-
-          ## Production Optimization
-          ```bash
-          php artisan config:cache
-          php artisan route:cache  
-          php artisan view:cache
-          ```
-
-          ## Troubleshooting
-          - Run `php artisan storage:link` if file uploads don't work
-          - Run `php artisan optimize:clear` to clear caches
-          EOF
-
-      - name: Create Complete Package
-        run: |
-          # Buat struktur folder deployment
-          mkdir -p benjamincrozat-package
+          # Buat ZIP cepat
+          cd deploy && zip -rq ../app.zip .
           
-          # Copy core Laravel folders
-          cp -r app bootstrap config database public resources routes storage vendor benjamincrozat-package/
-          
-          # Copy required files dengan pengecekan
-          cp artisan composer.json composer.lock package.json .env.production DEPLOYMENT.md benjamincrozat-package/
-          
-          # Copy bun.lockb hanya jika ada
-          if [ -f "bun.lockb" ]; then
-            cp bun.lockb benjamincrozat-package/
-          fi
-          
-          # Copy package-lock.json atau yarn.lock jika ada
-          if [ -f "package-lock.json" ]; then
-            cp package-lock.json benjamincrozat-package/
-          fi
-          
-          if [ -f "yarn.lock" ]; then
-            cp yarn.lock benjamincrozat-package/
-          fi
-          
-          # Hapus folder tests jika ada
-          rm -rf benjamincrozat-package/tests 2>/dev/null || true
-          
-          # Pastikan storage writable
-          chmod -R 755 benjamincrozat-package/storage
-          chmod -R 755 benjamincrozat-package/bootstrap/cache
-          
-          # Buat ZIP package
-          cd benjamincrozat-package && zip -r ../benjamincrozat-complete.zip .
-          
-          echo "📦 Package created successfully!"
-          echo "📁 Files included:"
-          ls -la benjamincrozat-complete.zip
-          echo "💾 File size: $(du -h benjamincrozat-complete.zip | cut -f1)"
+          echo "📦 Package ready: $(du -h ../app.zip | cut -f1)"
 
-      - name: Upload Artifact
+      - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: benjamincrozat-package
-          path: |
-            benjamincrozat-complete.zip
-            database/dump.sql
-          retention-days: 30
-
-      - name: Show Package Info
-        run: |
-          echo "🎉 Build completed successfully!"
-          echo "📦 Package includes:"
-          echo "   - Laravel application (ready for production)"
-          echo "   - Database dump with sample data"
-          echo "   - Production .env template"
-          echo "   - Deployment instructions"
-          echo "   - Built frontend assets"
-          echo ""
-          echo "📋 Download artifact from GitHub Actions"
+          name: laravel-app
+          path: app.zip
