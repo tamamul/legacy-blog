@@ -25,6 +25,14 @@ jobs:
         with:
           bun-version: latest
 
+      - name: Install Composer Dependencies
+        run: composer install --no-dev --prefer-dist --optimize-autoloader
+
+      - name: Copy .env and Generate Key
+        run: |
+          cp .env.example .env
+          php artisan key:generate
+
       - name: Setup MySQL
         uses: ankane/setup-mysql@v1
         with:
@@ -36,14 +44,6 @@ jobs:
           sudo mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY 'root';"
           sudo systemctl restart mysql
           sleep 3
-
-      - name: Copy .env and Generate Key
-        run: |
-          cp .env.example .env
-          php artisan key:generate
-
-      - name: Install Composer Dependencies
-        run: composer install --no-dev --prefer-dist --optimize-autoloader
 
       - name: Create Database and Run Migrations
         run: |
@@ -71,10 +71,14 @@ jobs:
 
       - name: Create Production .env Template
         run: |
-          cat > .env.production << 'EOF'
+          # Generate fresh key untuk production
+          php artisan key:generate --show > app_key.txt
+          APP_KEY=$(cat app_key.txt)
+          
+          cat > .env.production << EOF
           APP_NAME="Benjamin Crozat"
           APP_ENV=production
-          APP_KEY=$(php artisan key:generate --show)
+          APP_KEY=${APP_KEY}
           APP_DEBUG=false
           APP_URL=https://yourdomain.com
 
@@ -101,7 +105,7 @@ jobs:
           MAIL_PASSWORD=null
           MAIL_ENCRYPTION=null
           MAIL_FROM_ADDRESS=null
-          MAIL_FROM_NAME="${APP_NAME}"
+          MAIL_FROM_NAME="\${APP_NAME}"
 
           # Sentry (Production Only)
           SENTRY_LARAVEL_DSN=
@@ -124,7 +128,7 @@ jobs:
           2. Create database: `benjamincrozat`
           3. Update `.env` with your database credentials
           4. Run: `php artisan migrate --force`
-          5. Run: `bun install && bun run build`
+          5. Run: `bun install && bun run build` (or npm/yarn equivalent)
           6. Point web server to `/public` directory
 
           ## Database Import (Optional)
@@ -148,20 +152,17 @@ jobs:
           mkdir -p benjamincrozat-package
           
           # Copy semua file yang diperlukan
-          cp -r . benjamincrozat-package/
+          cp -r app bootstrap config database public resources routes storage vendor benjamincrozat-package/
+          cp artisan composer.json composer.lock package.json bun.lockb .env.production DEPLOYMENT.md benjamincrozat-package/
           
-          # Hapus file yang tidak perlu di production
-          rm -rf benjamincrozat-package/.git
-          rm -rf benjamincrozat-package/.github
-          rm -f benjamincrozat-package/.gitignore
-          rm -f benjamincrozat-package/README.md
-          rm -f benjamincrozat-package/phpunit.xml
-          rm -f benjamincrozat-package/bun.lockb
+          # Pastikan storage writable
+          chmod -R 755 benjamincrozat-package/storage
+          chmod -R 755 benjamincrozat-package/bootstrap/cache
           
           # Buat ZIP package
-          zip -r benjamincrozat-complete.zip benjamincrozat-package/ -x "*.git*" "*.github*" "node_modules/*"
+          cd benjamincrozat-package && zip -r ../benjamincrozat-complete.zip .
           
-          echo "Package structure:"
+          echo "Package created successfully!"
           ls -la benjamincrozat-complete.zip
           du -h benjamincrozat-complete.zip
 
@@ -172,8 +173,6 @@ jobs:
           path: |
             benjamincrozat-complete.zip
             database/dump.sql
-            .env.production
-            DEPLOYMENT.md
           retention-days: 30
 
       - name: Show Package Info
@@ -186,7 +185,4 @@ jobs:
           echo "   - Deployment instructions"
           echo "   - Built frontend assets"
           echo ""
-          echo "📋 Next steps:"
-          echo "   1. Download artifact from GitHub Actions"
-          echo "   2. Extract to your server"
-          echo "   3. Follow DEPLOYMENT.md instructions"
+          echo "📋 File size: $(du -h benjamincrozat-complete.zip | cut -f1)"
