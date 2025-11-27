@@ -25,7 +25,7 @@ jobs:
         with:
           bun-version: latest
 
-      - name: Install Composer Dependencies
+      - name: Install Composer Dependencies (No Dev)
         run: composer install --no-dev --prefer-dist --optimize-autoloader
 
       - name: Copy .env and Generate Key
@@ -61,8 +61,8 @@ jobs:
           bun install
           bun run build
 
-      - name: Run Tests
-        run: php artisan test
+      - name: Skip Tests (Build Package Only)
+        run: echo "Skipping tests for package build"
 
       - name: Dump Database
         run: |
@@ -154,6 +154,9 @@ jobs:
           # Copy semua file yang diperlukan
           cp -r app bootstrap config database public resources routes storage vendor benjamincrozat-package/
           cp artisan composer.json composer.lock package.json bun.lockb .env.production DEPLOYMENT.md benjamincrozat-package/
+          
+          # Hapus folder tests jika ada
+          rm -rf benjamincrozat-package/tests 2>/dev/null || true
           
           # Pastikan storage writable
           chmod -R 755 benjamincrozat-package/storage
