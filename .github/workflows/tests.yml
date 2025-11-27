@@ -61,7 +61,7 @@ jobs:
           bun install
           bun run build
 
-      - name: Skip Tests (Build Package Only)
+      - name: Skip Tests
         run: echo "Skipping tests for package build"
 
       - name: Dump Database
@@ -151,9 +151,25 @@ jobs:
           # Buat struktur folder deployment
           mkdir -p benjamincrozat-package
           
-          # Copy semua file yang diperlukan
+          # Copy core Laravel folders
           cp -r app bootstrap config database public resources routes storage vendor benjamincrozat-package/
-          cp artisan composer.json composer.lock package.json bun.lockb .env.production DEPLOYMENT.md benjamincrozat-package/
+          
+          # Copy required files dengan pengecekan
+          cp artisan composer.json composer.lock package.json .env.production DEPLOYMENT.md benjamincrozat-package/
+          
+          # Copy bun.lockb hanya jika ada
+          if [ -f "bun.lockb" ]; then
+            cp bun.lockb benjamincrozat-package/
+          fi
+          
+          # Copy package-lock.json atau yarn.lock jika ada
+          if [ -f "package-lock.json" ]; then
+            cp package-lock.json benjamincrozat-package/
+          fi
+          
+          if [ -f "yarn.lock" ]; then
+            cp yarn.lock benjamincrozat-package/
+          fi
           
           # Hapus folder tests jika ada
           rm -rf benjamincrozat-package/tests 2>/dev/null || true
@@ -165,9 +181,10 @@ jobs:
           # Buat ZIP package
           cd benjamincrozat-package && zip -r ../benjamincrozat-complete.zip .
           
-          echo "Package created successfully!"
+          echo "📦 Package created successfully!"
+          echo "📁 Files included:"
           ls -la benjamincrozat-complete.zip
-          du -h benjamincrozat-complete.zip
+          echo "💾 File size: $(du -h benjamincrozat-complete.zip | cut -f1)"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
@@ -188,4 +205,4 @@ jobs:
           echo "   - Deployment instructions"
           echo "   - Built frontend assets"
           echo ""
-          echo "📋 File size: $(du -h benjamincrozat-complete.zip | cut -f1)"
+          echo "📋 Download artifact from GitHub Actions"
