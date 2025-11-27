@@ -1,7 +1,10 @@
-name: Quick Laravel Build
+name: Build Laravel Package
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
 
 jobs:
   build:
@@ -9,34 +12,119 @@ jobs:
     timeout-minutes: 10
 
     steps:
-      - name: Checkout
+      - name: Checkout Repository
         uses: actions/checkout@v3
 
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
         with:
           php-version: '8.2'
-          extensions: mbstring, xml, ctype, json
+          extensions: mbstring, pdo, pdo_mysql, tokenizer, xml, ctype, json, bcmath
 
-      - name: Install Dependencies
+      - name: Install Composer Dependencies
+        run: composer install --no-dev --prefer-dist --optimize-autoloader --no-progress
+
+      - name: Setup MySQL
+        uses: ankane/setup-mysql@v1
+        with:
+          mysql-version: '8.0'
+
+      - name: Setup Database and Migrations
         run: |
-          composer install --no-dev --prefer-dist --optimize-autoloader --no-progress --no-suggest
-          composer dump-autoload --optimize
+          mysql -u root -e "CREATE DATABASE IF NOT EXISTS laravel_app;"
+          cp .env.example .env
+          php artisan key:generate
+          sed -i 's/DB_CONNECTION=.*/DB_CONNECTION=mysql/' .env
+          sed -i 's/DB_DATABASE=.*/DB_DATABASE=laravel_app/' .env
+          sed -i 's/DB_USERNAME=.*/DB_USERNAME=root/' .env
+          sed -i 's/DB_PASSWORD=.*/DB_PASSWORD=/' .env
+          php artisan migrate --force --seed --no-interaction
 
-      - name: Create Essential Package
+      - name: Build Frontend Assets
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - run: bun run build
+
+      - name: Backup Database to SQL
         run: |
-          mkdir deploy
-          # Hanya file yang essential
-          cp -r app bootstrap config database public resources routes storage vendor deploy/
-          cp artisan composer.json composer.lock deploy/
-          
-          # Buat ZIP cepat
-          cd deploy && zip -rq ../app.zip .
-          
-          echo "📦 Package ready: $(du -h ../app.zip | cut -f1)"
+          mysqldump -u root laravel_app > database_backup.sql
+          echo "✅ Database backup created: $(wc -l < database_backup.sql) lines"
 
-      - name: Upload
+      - name: Create Production Package
+        run: |
+          # Buat folder package
+          mkdir -p package
+          
+          # Copy hanya file yang diperlukan untuk production
+          cp -r app bootstrap config database public resources routes storage vendor package/
+          cp artisan composer.json composer.lock package.json package/
+          
+          # Include database backup
+          cp database_backup.sql package/
+          
+          # Buat .env production template
+          cat > package/.env.production << 'EOF'
+          APP_NAME="Laravel App"
+          APP_ENV=production
+          APP_KEY=base64:your_app_key_here
+          APP_DEBUG=false
+          APP_URL=https://yourdomain.com
+
+          DB_CONNECTION=mysql
+          DB_HOST=127.0.0.1
+          DB_PORT=3306
+          DB_DATABASE=your_database_name
+          DB_USERNAME=your_username
+          DB_PASSWORD=your_password
+
+          SESSION_DRIVER=database
+          SESSION_LIFETIME=120
+          EOF
+
+          # Buat instruksi deploy
+          cat > package/DEPLOY_INSTRUCTIONS.md << 'EOF'
+          # Deployment Instructions
+
+          1. Extract semua file ke server
+          2. Copy .env.production ke .env
+          3. Edit .env dengan setting database Anda
+          4. Import database (optional):
+             mysql -u username -p database_name < database_backup.sql
+          5. Run migrations:
+             php artisan migrate --force
+          6. Build assets (jika perlu):
+             bun install && bun run build
+          7. Point web server ke folder /public
+
+          Untuk fresh install tanpa sample data, skip step 4.
+          EOF
+
+          # Set permissions
+          chmod -R 755 package/storage
+          chmod -R 755 package/bootstrap/cache
+
+          # Buat ZIP
+          cd package && zip -rq ../laravel-package.zip .
+          
+          echo "📦 Package size: $(du -h ../laravel-package.zip | cut -f1)"
+
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: laravel-app
-          path: app.zip
+          name: laravel-production-package
+          path: |
+            laravel-package.zip
+            database_backup.sql
+          retention-days: 7
+
+      - name: Show Summary
+        run: |
+          echo "🎉 BUILD SUCCESS!"
+          echo "📦 Artifact contains:"
+          echo "   - Laravel app (ready for production)"
+          echo "   - Database backup (database_backup.sql)"
+          echo "   - Deployment instructions"
+          echo ""
+          echo "📋 Next: Download artifact from GitHub Actions"
